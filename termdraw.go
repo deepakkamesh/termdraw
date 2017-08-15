@@ -2,6 +2,8 @@ package termdraw
 
 import (
 	"image"
+	"image/png"
+	"os"
 	"time"
 
 	termbox "github.com/nsf/termbox-go"
@@ -22,6 +24,7 @@ type Term struct {
 	tick      *time.Ticker
 }
 
+// New returns an initialized Term.
 func New() *Term {
 	return &Term{
 		eventChan: make(chan termbox.Event),
@@ -30,6 +33,25 @@ func New() *Term {
 		images:    []imageData{},
 		curr:      0,
 	}
+}
+
+func LoadImages(images ...string) ([]image.Image, error) {
+	imgList := []image.Image{}
+
+	for _, imgFile := range images {
+		f, err := os.Open(imgFile)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+
+		img, err := png.Decode(f)
+		if err != nil {
+			return nil, err
+		}
+		imgList = append(imgList, img)
+	}
+	return imgList, nil
 }
 
 func (s *Term) Init() error {

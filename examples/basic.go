@@ -1,45 +1,24 @@
 package main
 
 import (
-	"image"
-	"image/png"
-	"os"
+	"log"
 
 	"github.com/deepakkamesh/termdraw"
 )
 
 func main() {
 
-	f2, err := os.Open("walle_normal.png")
+	images, err := termdraw.LoadImages("walle_normal.png", "walle_happy.png")
 	if err != nil {
-		panic(err)
-	}
-	defer f2.Close()
-
-	img2, err := png.Decode(f2)
-	if err != nil {
-		panic(err)
-	}
-
-	f3, err := os.Open("walle_happy.png")
-	if err != nil {
-		panic(err)
-	}
-	defer f3.Close()
-
-	img3, err := png.Decode(f3)
-	if err != nil {
-		panic(err)
+		log.Fatalf("Failed to load images: %v", err)
 	}
 
 	td := termdraw.New()
-	td.Animate([]image.Image{img2, img3}, '*', 200)
+	td.Animate(images, '*', 200)
 	if err := td.Init(); err != nil {
 		panic(err)
 	}
 	td.Run()
 	for {
 	}
-	_ = img2
-	_ = img3
 }

@@ -1,6 +1,7 @@
 package termdraw
 
 import (
+	"errors"
 	"image"
 	"image/png"
 	"os"
@@ -15,23 +16,31 @@ type imageData struct {
 	data [][]bool
 }
 
+type Animation struct {
+	images []image.Image
+	ch     rune
+}
+
 type Term struct {
-	eventChan chan termbox.Event
-	quit      chan struct{}
-	curr      uint
-	images    []imageData
-	ch        rune
-	tick      *time.Ticker
+	EventCh    chan termbox.Event
+	quitLoop   chan struct{}
+	quitPoller chan struct{}
+	curr       uint
+	images     []imageData
+	ch         rune
+	tick       *time.Ticker
+	updateCh   chan *Animation
 }
 
 // New returns an initialized Term.
 func New() *Term {
 	return &Term{
-		eventChan: make(chan termbox.Event),
-		quit:      make(chan struct{}),
-		tick:      time.NewTicker(200 * time.Millisecond),
-		images:    []imageData{},
-		curr:      0,
+		EventCh:    make(chan termbox.Event),
+		quitLoop:   make(chan struct{}),
+		quitPoller: make(chan struct{}),
+		tick:       time.NewTicker(100 * time.Millisecond),
+		curr:       0,
+		updateCh:   make(chan *Animation),
 	}
 }
 
@@ -60,13 +69,32 @@ func (s *Term) Init() error {
 	if err := termbox.Init(); err != nil {
 		return err
 	}
+	termbox.SetInputMode(termbox.InputEsc)
 	return nil
 }
 
+// Animate sends image data to the main processing loop. This is done
+// in the main loop to avoid race conditions; updating image data while
+// its being displayed by draw func.
 func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) {
+
+	s.updateCh <- &Animation{
+		images: imgs,
+		ch:     ch,
+	}
+}
+
+// processImage processes the image data and loads it. It currently only
+// processes the A of rgbA of a monochrome image. 'A' indicates the opacity
+// of the pixel.
+func (s *Term) processImages(imgs []image.Image, ch rune, d time.Duration) {
 	//s.tick = time.NewTicker(d)
 	s.ch = ch
 
+	s.images = nil
+
+	// TODO: The image processing can be done in Animate function and only pass the image{}
+	// through the channel.
 	for _, img := range imgs {
 
 		// Allocate Array.
@@ -96,6 +124,9 @@ func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) {
 }
 
 func (s *Term) draw() {
+	if len(s.images) == 0 {
+		return
+	}
 	w, h := termbox.Size()
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	for y := 0; y < h; y++ {
@@ -108,34 +139,36 @@ func (s *Term) draw() {
 	termbox.Flush()
 }
 
-func (s *Term) Run() {
+func (s *Term) Run() error {
+	if s == nil {
+		errors.New("termdraw not initialized")
+	}
 
-	// Start termbox poller.
+	// Start termbox event poller.
 	go func() {
 		for {
-			s.eventChan <- termbox.PollEvent()
+			select {
+			case <-s.quitPoller:
+				close(s.EventCh)
+				return
+			default:
+				s.EventCh <- termbox.PollEvent()
+			}
 		}
 	}()
 
-	go s.EventLoop()
+	go s.eventLoop()
+	return nil
 }
 
-func (s *Term) EventLoop() {
+func (s *Term) eventLoop() {
+	defer termbox.Close()
 	i := 0
-
 	for {
 		select {
-
-		// Handle events from termbox.
-		case evt := <-s.eventChan:
-			switch evt.Type {
-			case termbox.EventKey:
-				if evt.Key == termbox.KeyEsc {
-					go func() {
-						s.quit <- struct{}{}
-					}()
-				}
-			}
+		case upd := <-s.updateCh:
+			i = 0
+			s.processImages(upd.images, upd.ch, 200)
 
 		case <-s.tick.C:
 			if i == len(s.images) {
@@ -145,10 +178,10 @@ func (s *Term) EventLoop() {
 			s.draw()
 			i++
 
-		case <-s.quit:
-			termbox.Sync()
-			termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+		case <-s.quitLoop:
 			termbox.Flush()
+			termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+			termbox.Sync()
 			termbox.Close()
 			return
 		}
@@ -156,5 +189,10 @@ func (s *Term) EventLoop() {
 }
 
 func (s *Term) Quit() {
-	s.quit <- struct{}{}
+	// Called in a goroutine because of potential deadlock with
+	// poller loop.
+	go func() {
+		s.quitLoop <- struct{}{}
+		s.quitPoller <- struct{}{}
+	}()
 }

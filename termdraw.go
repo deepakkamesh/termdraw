@@ -11,14 +11,10 @@ import (
 )
 
 type imageData struct {
+	ch   rune
 	Xmax int
 	Ymax int
 	data [][]bool
-}
-
-type Animation struct {
-	images []image.Image
-	ch     rune
 }
 
 type Term struct {
@@ -29,7 +25,7 @@ type Term struct {
 	images     []imageData
 	ch         rune
 	tick       *time.Ticker
-	updateCh   chan *Animation
+	updateCh   chan []imageData
 }
 
 // New returns an initialized Term.
@@ -40,10 +36,12 @@ func New() *Term {
 		quitPoller: make(chan struct{}),
 		tick:       time.NewTicker(100 * time.Millisecond),
 		curr:       0,
-		updateCh:   make(chan *Animation),
+		updateCh:   make(chan []imageData),
 	}
 }
 
+// LoadImages processes list of png files and loads their data
+// as image.Image.
 func LoadImages(images ...string) ([]image.Image, error) {
 	imgList := []image.Image{}
 
@@ -73,28 +71,13 @@ func (s *Term) Init() error {
 	return nil
 }
 
-// Animate sends image data to the main processing loop. This is done
-// in the main loop to avoid race conditions; updating image data while
+// Animate processes image data and sends it to the main processing loop to update.
+// This is done in the main loop to avoid race conditions; updating image data while
 // its being displayed by draw func.
 func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) {
 
-	s.updateCh <- &Animation{
-		images: imgs,
-		ch:     ch,
-	}
-}
+	var imagesData []imageData
 
-// processImage processes the image data and loads it. It currently only
-// processes the A of rgbA of a monochrome image. 'A' indicates the opacity
-// of the pixel.
-func (s *Term) processImages(imgs []image.Image, ch rune, d time.Duration) {
-	//s.tick = time.NewTicker(d)
-	s.ch = ch
-
-	s.images = nil
-
-	// TODO: The image processing can be done in Animate function and only pass the image{}
-	// through the channel.
 	for _, img := range imgs {
 
 		// Allocate Array.
@@ -103,7 +86,7 @@ func (s *Term) processImages(imgs []image.Image, ch rune, d time.Duration) {
 			data[j] = make([]bool, img.Bounds().Max.X)
 		}
 
-		// Mark X,Y coordinates which are opaque
+		// Mark X,Y coordinates which are opaque from A value.
 		for y := 0; y < img.Bounds().Max.Y; y++ {
 			for x := 0; x < img.Bounds().Max.X; x++ {
 				_, _, _, a := img.At(x, y).RGBA()
@@ -115,14 +98,18 @@ func (s *Term) processImages(imgs []image.Image, ch rune, d time.Duration) {
 			}
 		}
 
-		s.images = append(s.images, imageData{
+		imagesData = append(imagesData, imageData{
 			Xmax: img.Bounds().Max.X,
 			Ymax: img.Bounds().Max.Y,
 			data: data,
+			ch:   ch,
 		})
 	}
+
+	s.updateCh <- imagesData
 }
 
+// draw updates the terminal with the image currently pointed by s.curr.
 func (s *Term) draw() {
 	if len(s.images) == 0 {
 		return
@@ -132,13 +119,14 @@ func (s *Term) draw() {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			if s.images[s.curr].Ymax > y && s.images[s.curr].Xmax > x && s.images[s.curr].data[y][x] {
-				termbox.SetCell(x, y, s.ch, termbox.ColorDefault, termbox.ColorDefault)
+				termbox.SetCell(x, y, s.images[s.curr].ch, termbox.ColorDefault, termbox.ColorDefault)
 			}
 		}
 	}
 	termbox.Flush()
 }
 
+// Run starts the eventpoller and main update loop.
 func (s *Term) Run() error {
 	if s == nil {
 		errors.New("termdraw not initialized")
@@ -157,18 +145,18 @@ func (s *Term) Run() error {
 		}
 	}()
 
-	go s.eventLoop()
+	go s.updateLoop()
 	return nil
 }
 
-func (s *Term) eventLoop() {
+func (s *Term) updateLoop() {
 	defer termbox.Close()
 	i := 0
 	for {
 		select {
 		case upd := <-s.updateCh:
 			i = 0
-			s.processImages(upd.images, upd.ch, 200)
+			s.images = upd
 
 		case <-s.tick.C:
 			if i == len(s.images) {
@@ -179,7 +167,6 @@ func (s *Term) eventLoop() {
 			i++
 
 		case <-s.quitLoop:
-			termbox.Flush()
 			termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 			termbox.Sync()
 			termbox.Close()

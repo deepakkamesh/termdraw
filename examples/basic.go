@@ -25,7 +25,7 @@ func main() {
 	}
 	td.Run()
 
-	td.Animate(image, '*', 200)
+	td.Animate(images, '*', 200)
 
 	// Handle events from termbox.
 	for {
@@ -41,4 +41,5 @@ func main() {
 	t := time.NewTimer(1 * time.Millisecond)
 	<-t.C
 	_ = images
+	_ = image
 }

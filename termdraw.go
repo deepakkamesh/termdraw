@@ -1,7 +1,7 @@
 package termdraw
 
 import (
-	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"os"
@@ -10,22 +10,27 @@ import (
 	termbox "github.com/nsf/termbox-go"
 )
 
+type imageUpdate struct {
+	ch         rune
+	d          time.Duration
+	imagesData []imageData
+}
+
 type imageData struct {
-	ch   rune
 	Xmax int
 	Ymax int
 	data [][]bool
 }
 
 type Term struct {
-	EventCh    chan termbox.Event
-	quitLoop   chan struct{}
-	quitPoller chan struct{}
-	curr       uint
-	images     []imageData
-	ch         rune
-	tick       *time.Ticker
-	updateCh   chan []imageData
+	EventCh    chan termbox.Event // Channel to send termbox event.
+	quitLoop   chan struct{}      // Quit channel for main loop.
+	quitPoller chan struct{}      // Quit channel for event loop.
+	curr       uint               // pointer to the current index of the image displayed.
+	images     []imageData        // list of images to cycle through for the animation.
+	ch         rune               // Unicode char to render the image.
+	tick       *time.Ticker       // ticker which controls the cycle rate of images.
+	updateCh   chan *imageUpdate  // channel to send image updates.
 }
 
 // New returns an initialized Term.
@@ -36,7 +41,7 @@ func New() *Term {
 		quitPoller: make(chan struct{}),
 		tick:       time.NewTicker(100 * time.Millisecond),
 		curr:       0,
-		updateCh:   make(chan []imageData),
+		updateCh:   make(chan *imageUpdate),
 	}
 }
 
@@ -61,7 +66,12 @@ func LoadImages(images ...string) ([]image.Image, error) {
 	return imgList, nil
 }
 
+// Init initializes termbox.
 func (s *Term) Init() error {
+
+	if s == nil {
+		return fmt.Errorf("termdraw not initialized")
+	}
 
 	// Initialize termbox.
 	if err := termbox.Init(); err != nil {
@@ -74,7 +84,11 @@ func (s *Term) Init() error {
 // Animate processes image data and sends it to the main processing loop to update.
 // This is done in the main loop to avoid race conditions; updating image data while
 // its being displayed by draw func.
-func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) {
+func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) error {
+
+	if s == nil {
+		return fmt.Errorf("termdraw not initialized")
+	}
 
 	var imagesData []imageData
 
@@ -102,11 +116,15 @@ func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) {
 			Xmax: img.Bounds().Max.X,
 			Ymax: img.Bounds().Max.Y,
 			data: data,
-			ch:   ch,
 		})
 	}
 
-	s.updateCh <- imagesData
+	s.updateCh <- &imageUpdate{
+		ch:         ch,
+		imagesData: imagesData,
+		d:          d,
+	}
+	return nil
 }
 
 // draw updates the terminal with the image currently pointed by s.curr.
@@ -119,7 +137,7 @@ func (s *Term) draw() {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			if s.images[s.curr].Ymax > y && s.images[s.curr].Xmax > x && s.images[s.curr].data[y][x] {
-				termbox.SetCell(x, y, s.images[s.curr].ch, termbox.ColorDefault, termbox.ColorDefault)
+				termbox.SetCell(x, y, s.ch, termbox.ColorDefault, termbox.ColorDefault)
 			}
 		}
 	}
@@ -129,7 +147,7 @@ func (s *Term) draw() {
 // Run starts the eventpoller and main update loop.
 func (s *Term) Run() error {
 	if s == nil {
-		errors.New("termdraw not initialized")
+		return fmt.Errorf("termdraw not initialized")
 	}
 
 	// Start termbox event poller.
@@ -149,6 +167,7 @@ func (s *Term) Run() error {
 	return nil
 }
 
+// updateLoop renders the image on the terminal.
 func (s *Term) updateLoop() {
 	defer termbox.Close()
 	i := 0
@@ -156,7 +175,10 @@ func (s *Term) updateLoop() {
 		select {
 		case upd := <-s.updateCh:
 			i = 0
-			s.images = upd
+			s.images = upd.imagesData
+			s.ch = upd.ch
+			s.tick.Stop()
+			s.tick = time.NewTicker(upd.d)
 
 		case <-s.tick.C:
 			if i == len(s.images) {
@@ -175,6 +197,7 @@ func (s *Term) updateLoop() {
 	}
 }
 
+// Quit terminates the loop and exits termdraw.
 func (s *Term) Quit() {
 	// Called in a goroutine because of potential deadlock with
 	// poller loop.

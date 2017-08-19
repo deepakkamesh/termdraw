@@ -11,9 +11,22 @@ import (
 
 func main() {
 	flag.Parse()
-	image, err := termdraw.LoadImages("walle_normal.png")
 
-	images, err := termdraw.LoadImages("walle_normal.png", "walle_speaking_small.png", "walle_speaking_med.png", "walle_speaking_large.png")
+	speaking, err := termdraw.LoadImages(
+		"walle_normal.png",
+		"walle_speaking_small.png",
+		"walle_speaking_med.png",
+		"walle_speaking_large.png",
+	)
+
+	if err != nil {
+		log.Fatalf("Failed to load images: %v", err)
+	}
+
+	blinking, err := termdraw.LoadImages(
+		"walle_normal.png",
+		"walle_normal_eye_small.png",
+	)
 
 	if err != nil {
 		log.Fatalf("Failed to load images: %v", err)
@@ -25,8 +38,10 @@ func main() {
 	}
 	td.Run()
 
-	td.Animate(images, '*', 200)
+	td.Animate(blinking, '*', 500*time.Millisecond)
 
+	_ = speaking
+	_ = blinking
 	// Handle events from termbox.
 	for {
 		evt := <-td.EventCh
@@ -40,6 +55,4 @@ func main() {
 	// This is needed for termbox to cleanup properly. (not sure why?)
 	t := time.NewTimer(1 * time.Millisecond)
 	<-t.C
-	_ = images
-	_ = image
 }

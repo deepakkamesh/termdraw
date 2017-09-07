@@ -83,7 +83,7 @@ func (s *Term) Init() error {
 
 // Animate processes image data and sends it to the main processing loop to update.
 // This is done in the main loop to avoid race conditions; updating image data while
-// its being displayed by draw func.
+// its being displayed by draw func. Should be called after starting Run().
 func (s *Term) Animate(imgs []image.Image, ch rune, d time.Duration) error {
 
 	if s == nil {

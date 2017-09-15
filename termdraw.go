@@ -31,6 +31,7 @@ type Term struct {
 	ch         rune               // Unicode char to render the image.
 	tick       *time.Ticker       // ticker which controls the cycle rate of images.
 	updateCh   chan *imageUpdate  // channel to send image updates.
+	display    bool               // False to not display Animation.
 }
 
 // New returns an initialized Term.
@@ -42,7 +43,13 @@ func New() *Term {
 		tick:       time.NewTicker(100 * time.Millisecond),
 		curr:       0,
 		updateCh:   make(chan *imageUpdate),
+		display:    true,
 	}
+}
+
+// Display controls if the animation is displayed or not.
+func (s *Term) Display(v bool) {
+	s.display = v
 }
 
 // LoadImages processes list of png files and loads their data
@@ -141,7 +148,6 @@ func (s *Term) draw() {
 			}
 		}
 	}
-	termbox.Flush()
 }
 
 // Run starts the eventpoller and main update loop.
@@ -185,7 +191,10 @@ func (s *Term) updateLoop() {
 				i = 0
 			}
 			s.curr = uint(i)
-			s.draw()
+			if s.display {
+				s.draw()
+			}
+			termbox.Flush()
 			i++
 
 		case <-s.quitLoop:
